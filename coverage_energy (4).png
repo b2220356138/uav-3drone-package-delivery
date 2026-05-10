@@ -1,0 +1,144 @@
+function simData = updateDroneTelemetry(simData, k)
+% updateDroneTelemetry
+% GUI için drone telemetri alanlarını güvenli şekilde günceller.
+%
+% Güncellenen alanlar:
+% simData.drones(i).id
+% simData.drones(i).x
+% simData.drones(i).y
+% simData.drones(i).role
+% simData.drones(i).battery
+% simData.drones(i).temperature
+% simData.drones(i).status
+%
+% NaN trajectory noktaları otomatik olarak atlanır.
+% GUI'ye NaN x/y/z gönderilmez.
+
+    roles = ["Delivery", "Support", "Backup"];
+
+    simData.timeIndex = k;
+
+    for i = 1:simData.numDrones
+
+        xTraj = simData.drones(i).xTrajectory(:);
+        yTraj = simData.drones(i).yTrajectory(:);
+        zTraj = simData.drones(i).zTrajectory(:);
+
+        n = numel(xTraj);
+
+        % İstenen index trajectory uzunluğunu aşmasın
+        idx = min(k, n);
+
+        % Geçerli trajectory noktalarını bul
+        validMask = isfinite(xTraj) & isfinite(yTraj) & isfinite(zTraj);
+        validIdx = find(validMask);
+
+        if isempty(validIdx)
+            % Hiç geçerli veri yoksa güvenli default değer kullan
+            simData.drones(i).x = 0;
+            simData.drones(i).y = 0;
+            simData.drones(i).z = 0;
+            simData.drones(i).battery = 0;
+            simData.drones(i).temperature = 0;
+            simData.drones(i).status = "No Data";
+
+            if i <= numel(roles)
+                simData.drones(i).role = roles(i);
+            else
+                simData.drones(i).role = "UAV";
+            end
+
+            continue;
+        end
+
+        % Eğer idx NaN noktaya denk gelirse, idx'e en yakın önceki geçerli noktayı seç
+        previousValid = validIdx(validIdx <= idx);
+
+        if isempty(previousValid)
+            % Eğer idx'ten önce geçerli nokta yoksa ilk geçerli noktayı kullan
+            safeIdx = validIdx(1);
+        else
+            safeIdx = previousValid(end);
+        end
+
+        % Anlık güvenli pozisyon
+        simData.drones(i).x = xTraj(safeIdx);
+        simData.drones(i).y = yTraj(safeIdx);
+        simData.drones(i).z = zTraj(safeIdx);
+
+        % Drone rolü
+        if i <= numel(roles)
+            simData.drones(i).role = roles(i);
+        else
+            simData.drones(i).role = "UAV";
+        end
+
+        % Geçerli trajectory üzerinden mesafe hesabı
+        validX = xTraj(validMask);
+        validY = yTraj(validMask);
+        validZ = zTraj(validMask);
+
+        % safeIdx'in validIdx içindeki karşılığını bul
+        safeValidPos = find(validIdx == safeIdx, 1);
+
+        if isempty(safeValidPos)
+            safeValidPos = 1;
+        end
+
+        if safeValidPos > 1
+            dx = diff(validX(1:safeValidPos));
+            dy = diff(validY(1:safeValidPos));
+            dz = diff(validZ(1:safeValidPos));
+
+            segmentDistances = sqrt(dx.^2 + dy.^2 + dz.^2);
+            totalDistance = sum(segmentDistances, "omitnan");
+            speed = segmentDistances(end);
+        else
+            totalDistance = 0;
+            speed = 0;
+        end
+
+        if ~isfinite(speed)
+            speed = 0;
+        end
+
+        if ~isfinite(totalDistance)
+            totalDistance = 0;
+        end
+
+        % Batarya modeli
+        % Zaman ve mesafeye göre azalır.
+        battery = 100 ...
+                  - 0.03 * safeValidPos ...
+                  - 0.02 * totalDistance ...
+                  - 1.5 * (i - 1);
+
+        battery = max(0, min(100, battery));
+
+        % Sıcaklık modeli
+        temperature = 32 ...
+                      + 0.15 * speed ...
+                      + 0.01 * safeValidPos ...
+                      + i;
+
+        if ~isfinite(temperature)
+            temperature = 32 + i;
+        end
+
+        % Status modeli
+        if safeValidPos == 1
+            status = "Ready";
+        elseif safeValidPos >= numel(validX)
+            status = "Completed";
+        elseif speed < 0.05
+            status = "Hovering";
+        else
+            status = "Flying";
+        end
+
+        % GUI alanlarını yaz
+        simData.drones(i).battery = battery;
+        simData.drones(i).temperature = temperature;
+        simData.drones(i).status = status;
+    end
+end

@@ -1,0 +1,40 @@
+function paths = run_lawnmower_coverage_3uav(area, altitude, spacing, startPositions)
+% run_lawnmower_coverage_3uav
+% Splits the area into 3 vertical strips.
+% Each UAV scans one strip using lawnmower pattern.
+
+numUAV = size(startPositions,1);
+paths = cell(1,numUAV);
+
+xEdges = linspace(area.xMin, area.xMax, numUAV+1);
+
+for u = 1:numUAV
+
+    xMin = xEdges(u);
+    xMax = xEdges(u+1);
+
+    xVals = xMin:spacing:xMax;
+
+    if xVals(end) < xMax
+        xVals = [xVals xMax];
+    end
+
+    path = startPositions(u,:);
+
+    for i = 1:numel(xVals)
+        x = xVals(i);
+
+        if mod(i,2) == 1
+            p1 = [x area.yMin altitude];
+            p2 = [x area.yMax altitude];
+        else
+            p1 = [x area.yMax altitude];
+            p2 = [x area.yMin altitude];
+        end
+
+        path = [path; p1; p2];
+    end
+
+    paths{u} = path;
+end
+end

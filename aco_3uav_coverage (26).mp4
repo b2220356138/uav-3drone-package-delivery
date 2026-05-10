@@ -1,0 +1,113 @@
+function plot_coverage_metric_charts(metrics, algorithmNames)
+% plot_coverage_metric_charts
+% Produces metric comparison charts for 3-UAV coverage algorithms.
+%
+% Metrics:
+% - total path length
+% - mission time
+% - estimated energy
+% - total turn count
+% - coverage percentage
+% - computation time
+% - computation time with log scale
+
+    n = numel(algorithmNames);
+
+    totalPathLength = zeros(1,n);
+    missionTime = zeros(1,n);
+    energyUsed = zeros(1,n);
+    turnCount = zeros(1,n);
+    coverage = zeros(1,n);
+    computeTime = zeros(1,n);
+
+    for i = 1:n
+        name = char(algorithmNames(i));
+
+        totalPathLength(i) = metrics.(name).totalPathLength;
+        missionTime(i) = metrics.(name).missionTime;
+        energyUsed(i) = metrics.(name).energyUsed;
+        turnCount(i) = metrics.(name).turnCount;
+        coverage(i) = metrics.(name).coverage;
+        computeTime(i) = metrics.(name).computeTime;
+    end
+
+    make_bar_chart(algorithmNames, totalPathLength, ...
+        "Total Path Length Comparison", ...
+        "Total Path Length (m)", ...
+        "coverage_total_path_length.png");
+
+    make_bar_chart(algorithmNames, missionTime, ...
+        "Mission Time Comparison", ...
+        "Mission Time (s)", ...
+        "coverage_mission_time.png");
+
+    make_bar_chart(algorithmNames, energyUsed, ...
+        "Energy Usage Comparison", ...
+        "Estimated Energy", ...
+        "coverage_energy.png");
+
+    make_bar_chart(algorithmNames, turnCount, ...
+        "Turn Count Comparison", ...
+        "Total Turns", ...
+        "coverage_turn_count.png");
+
+    make_bar_chart(algorithmNames, coverage, ...
+        "Coverage Percentage Comparison", ...
+        "Coverage (%)", ...
+        "coverage_percentage.png");
+
+    make_bar_chart(algorithmNames, computeTime, ...
+        "Computation Time Comparison", ...
+        "Computation Time (s)", ...
+        "coverage_compute_time.png");
+
+    make_log_bar_chart(algorithmNames, computeTime, ...
+        "Computation Time Comparison - Log Scale", ...
+        "Computation Time (s) - Log Scale", ...
+        "coverage_compute_time_logscale.png");
+end
+
+
+function make_bar_chart(names, values, titleText, yText, fileName)
+% make_bar_chart
+% Creates a regular bar chart.
+
+    figure;
+    bar(values);
+    grid on;
+
+    xticks(1:numel(names));
+    xticklabels(names);
+
+    ylabel(yText);
+    title(titleText);
+
+    exportgraphics(gcf, fileName, "Resolution", 300);
+end
+
+
+function make_log_bar_chart(names, values, titleText, yText, fileName)
+% make_log_bar_chart
+% Creates a log-scale bar chart.
+% Small values are clipped to a tiny positive value because log scale
+% cannot display zero.
+
+    valuesSafe = values;
+
+    
+    valuesSafe(valuesSafe <= 0) = 1e-6;
+
+    figure;
+    bar(valuesSafe);
+    grid on;
+
+    set(gca, "YScale", "log");
+
+    xticks(1:numel(names));
+    xticklabels(names);
+
+    ylabel(yText);
+    title(titleText);
+
+    exportgraphics(gcf, fileName, "Resolution", 300);
+end

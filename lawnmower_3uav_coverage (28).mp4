@@ -1,0 +1,149 @@
+function paths = run_aco_coverage_3uav(startPositions, coveragePoints)
+% run_aco_coverage_3uav
+% Multi-UAV ACO for coverage point assignment and routing.
+% Objective: balanced mission time + low total distance.
+
+    rng(7)
+
+    numUAV = size(startPositions,1);
+    numPoints = size(coveragePoints,1);
+
+    allPoints = [startPositions; coveragePoints];
+
+    startIdx = 1:numUAV;
+    coverageIdx = numUAV + (1:numPoints);
+
+    D = local_distance_matrix(allPoints);
+
+    numAnts = 50;
+    numIterations = 100;
+
+    alpha = 1.0;
+    beta = 3.0;
+    evaporation = 0.35;
+    Q = 100;
+
+    pheromone = ones(size(allPoints,1));
+
+    bestRoutes = [];
+    bestCost = inf;
+
+    for iter = 1:numIterations
+
+        antRoutes = cell(numAnts,1);
+        antCosts = zeros(numAnts,1);
+
+        for ant = 1:numAnts
+
+            routes = cell(1,numUAV);
+            current = zeros(1,numUAV);
+            lengths = zeros(1,numUAV);
+
+            for u = 1:numUAV
+                routes{u} = startIdx(u);
+                current(u) = startIdx(u);
+            end
+
+            unvisited = coverageIdx;
+
+            while ~isempty(unvisited)
+
+                % Choose UAV probabilistically, favoring shorter current route
+                invLoad = 1 ./ (lengths + 1);
+                uavProb = invLoad / sum(invLoad);
+                u = roulette_select(uavProb);
+
+                currentNode = current(u);
+
+                desirability = zeros(size(unvisited));
+
+                for j = 1:numel(unvisited)
+                    nextNode = unvisited(j);
+
+                    tau = pheromone(currentNode,nextNode)^alpha;
+                    eta = (1 / (D(currentNode,nextNode) + eps))^beta;
+
+                    desirability(j) = tau * eta;
+                end
+
+                probs = desirability / sum(desirability);
+                selectedIdx = roulette_select(probs);
+
+                nextNode = unvisited(selectedIdx);
+
+                routes{u} = [routes{u}, nextNode];
+                lengths(u) = lengths(u) + D(currentNode,nextNode);
+                current(u) = nextNode;
+
+                unvisited(selectedIdx) = [];
+            end
+
+            makespan = max(lengths);
+            totalDistance = sum(lengths);
+            imbalance = std(lengths);
+
+            cost = makespan + 0.20 * totalDistance + 1.5 * imbalance;
+
+            antRoutes{ant} = routes;
+            antCosts(ant) = cost;
+
+            if cost < bestCost
+                bestCost = cost;
+                bestRoutes = routes;
+            end
+        end
+
+        % Evaporation
+        pheromone = (1 - evaporation) * pheromone;
+
+        % Deposit
+        for ant = 1:numAnts
+            routes = antRoutes{ant};
+            cost = antCosts(ant);
+
+            for u = 1:numUAV
+                route = routes{u};
+
+                for k = 1:numel(route)-1
+                    a = route(k);
+                    b = route(k+1);
+
+                    pheromone(a,b) = pheromone(a,b) + Q / cost;
+                    pheromone(b,a) = pheromone(b,a) + Q / cost;
+                end
+            end
+        end
+    end
+
+    paths = cell(1,numUAV);
+
+    for u = 1:numUAV
+        route = bestRoutes{u};
+        paths{u} = allPoints(route,:);
+    end
+end
+
+function D = local_distance_matrix(points)
+    n = size(points,1);
+    D = zeros(n,n);
+
+    for i = 1:n
+        for j = 1:n
+            D(i,j) = norm(points(i,:) - points(j,:));
+        end
+    end
+end
+
+function idx = roulette_select(probs)
+    probs = probs(:);
+    probs = probs / sum(probs);
+
+    c = cumsum(probs);
+    r = rand;
+
+    idx = find(r <= c, 1, "first");
+
+    if isempty(idx)
+        idx = numel(probs);
+    end
+end

@@ -1,0 +1,148 @@
+function m = compute_coverage_metrics(paths, area, coveragePoints, sensorRadius, speed, computeTime)
+% compute_coverage_metrics
+% Computes fair metrics for 3-UAV coverage algorithms.
+%
+% Important:
+% Coverage is computed by sampling along path segments, not only by checking
+% waypoint vertices. This is necessary because Lawnmower covers the area
+% while moving along long sweep lines.
+
+    numUAV = numel(paths);
+
+    pathLengths = zeros(1,numUAV);
+    missionTimes = zeros(1,numUAV);
+    turnCounts = zeros(1,numUAV);
+
+    for u = 1:numUAV
+        p = paths{u};
+
+        if isempty(p) || size(p,1) < 2
+            pathLengths(u) = 0;
+            missionTimes(u) = 0;
+            turnCounts(u) = 0;
+            continue;
+        end
+
+        diffs = diff(p(:,1:3),1,1);
+        segmentLengths = vecnorm(diffs,2,2);
+
+        pathLengths(u) = sum(segmentLengths);
+        missionTimes(u) = pathLengths(u) / speed;
+        turnCounts(u) = estimate_turn_count(p);
+    end
+
+    coverage = estimate_coverage_from_segments(paths, coveragePoints, sensorRadius);
+
+    m.totalPathLength = sum(pathLengths);
+    m.maxPathLength = max(pathLengths);
+    m.meanPathLength = mean(pathLengths);
+
+    % Multi-UAV mission time is determined by the slowest UAV.
+    m.missionTime = max(missionTimes);
+
+    % Simple estimated energy model.
+    % Longer distance and more turns increase energy usage.
+    m.energyUsed = 0.08 * sum(pathLengths) + 0.5 * sum(turnCounts);
+
+    m.turnCount = sum(turnCounts);
+    m.coverage = coverage;
+    m.computeTime = computeTime;
+
+    % Extra detailed metrics
+    m.pathLengthsPerUAV = pathLengths;
+    m.missionTimesPerUAV = missionTimes;
+end
+
+
+function turnCount = estimate_turn_count(path)
+% estimate_turn_count
+% Counts meaningful turns based on angle change between consecutive segments.
+
+    if size(path,1) < 3
+        turnCount = 0;
+        return;
+    end
+
+    turnCount = 0;
+
+    for i = 2:size(path,1)-1
+        v1 = path(i,1:2) - path(i-1,1:2);
+        v2 = path(i+1,1:2) - path(i,1:2);
+
+        if norm(v1) == 0 || norm(v2) == 0
+            continue;
+        end
+
+        cosTheta = dot(v1,v2) / (norm(v1) * norm(v2));
+        cosTheta = max(-1, min(1, cosTheta));
+
+        angle = acosd(cosTheta);
+
+        if angle > 20
+            turnCount = turnCount + 1;
+        end
+    end
+end
+
+
+function coverage = estimate_coverage_from_segments(paths, coveragePoints, sensorRadius)
+% estimate_coverage_from_segments
+% Estimates coverage by sampling points along every UAV path segment.
+%
+% Why this is needed:
+% If coverage is calculated only from waypoint vertices, Lawnmower appears
+% to have low coverage because its long sweep lines are ignored.
+% This function fixes that by sampling along each line segment.
+
+    sampledPathPoints = [];
+
+    % Sampling interval. Smaller value gives more accurate coverage but
+    % increases computation time.
+    sampleStep = max(sensorRadius / 2, 1);
+
+    for u = 1:numel(paths)
+        p = paths{u};
+
+        if isempty(p)
+            continue;
+        end
+
+        if size(p,1) == 1
+            sampledPathPoints = [sampledPathPoints; p(:,1:2)];
+            continue;
+        end
+
+        for i = 1:size(p,1)-1
+            p1 = p(i,1:2);
+            p2 = p(i+1,1:2);
+
+            segmentLength = norm(p2 - p1);
+
+            nSamples = max(2, ceil(segmentLength / sampleStep));
+
+            xs = linspace(p1(1), p2(1), nSamples)';
+            ys = linspace(p1(2), p2(2), nSamples)';
+
+            sampledPathPoints = [sampledPathPoints; xs ys];
+        end
+    end
+
+    if isempty(sampledPathPoints)
+        coverage = 0;
+        return;
+    end
+
+    covered = false(size(coveragePoints,1),1);
+
+    for i = 1:size(coveragePoints,1)
+        point = coveragePoints(i,1:2);
+
+        distances = vecnorm(sampledPathPoints - point, 2, 2);
+
+        if any(distances <= sensorRadius)
+            covered(i) = true;
+        end
+    end
+
+    coverage = 100 * sum(covered) / numel(covered);
+end

@@ -1,0 +1,104 @@
+function mission = convertCoveragePathToMission(path, baseMissionTemplate, worldStart)
+% convertCoveragePathToMission
+% Converts an algorithm-generated coverage path [x y z] into the
+% UAV Package Delivery mission struct format.
+%
+% IMPORTANT:
+% The UAV Package Delivery model expects the mission vector to have the
+% same number of elements as baseMissionTemplate. In this project that size
+% is 42. Therefore this function always returns exactly numel(baseMissionTemplate)
+% mission elements.
+%
+% Input:
+%   path                : Nx3 planner path [x y z], positive altitude
+%   baseMissionTemplate : original baseMission struct from the model
+%   worldStart          : 1x3 desired world start [x y zNED]
+%
+% Output:
+%   mission             : Mx1 struct, where M = numel(baseMissionTemplate)
+
+    if size(path,2) ~= 3
+        error("Path must be Nx3: [x y z].");
+    end
+
+    if numel(worldStart) ~= 3
+        error("worldStart must be 1x3: [x y z].");
+    end
+
+    % Remove invalid rows
+    validMask = all(isfinite(path),2);
+    path = path(validMask,:);
+
+    if isempty(path)
+        error("Path contains no valid points.");
+    end
+
+    % Required mission length from original model
+    missionLength = numel(baseMissionTemplate);
+
+    % Translate planner coordinates so path(1,:) maps to worldStart.
+    plannerStart = path(1,:);
+
+    translatedPath = path;
+    translatedPath(:,1) = path(:,1) - plannerStart(1) + worldStart(1);
+    translatedPath(:,2) = path(:,2) - plannerStart(2) + worldStart(2);
+
+    % Planner altitude is positive, model mission uses NED-like negative altitude.
+    translatedPath(:,3) = -abs(path(:,3));
+
+    % Remove consecutive duplicate points
+    keep = true(size(translatedPath,1),1);
+
+    for k = 2:size(translatedPath,1)
+        if norm(translatedPath(k,:) - translatedPath(k-1,:)) < 1e-6
+            keep(k) = false;
+        end
+    end
+
+    translatedPath = translatedPath(keep,:);
+
+    % Force path to exactly missionLength points.
+    translatedPath = resamplePathToLength(translatedPath, missionLength);
+
+    % Use original baseMission as structural template.
+    mission = baseMissionTemplate;
+
+    for k = 1:missionLength
+        mission(k).position = single(translatedPath(k,:)');
+
+        % Preserve original mode pattern from baseMissionTemplate.
+        mission(k).mode = baseMissionTemplate(k).mode;
+
+        % Preserve params.
+        mission(k).params = single(baseMissionTemplate(k).params);
+    end
+end
+
+
+function fixedPath = resamplePathToLength(path, targetLength)
+% resamplePathToLength
+% Returns exactly targetLength path points.
+% If path is shorter, it is interpolated/padded.
+% If path is longer, it is downsampled along index space.
+
+    n = size(path,1);
+
+    if n == targetLength
+        fixedPath = path;
+        return;
+    end
+
+    if n == 1
+        fixedPath = repmat(path, targetLength, 1);
+        return;
+    end
+
+    oldIdx = linspace(1, n, n);
+    newIdx = linspace(1, n, targetLength);
+
+    fixedPath = zeros(targetLength, 3);
+
+    fixedPath(:,1) = interp1(oldIdx, path(:,1), newIdx, "linear");
+    fixedPath(:,2) = interp1(oldIdx, path(:,2), newIdx, "linear");
+    fixedPath(:,3) = interp1(oldIdx, path(:,3), newIdx, "linear");
+end

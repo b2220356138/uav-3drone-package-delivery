@@ -1,0 +1,75 @@
+function plot_coverage_trajectories(paths, coveragePoints, area, startPositions)
+% plot_coverage_trajectories
+% Shows coverage trajectories for all algorithms.
+
+algNames = fieldnames(paths);
+
+figure;
+hold on;
+grid on;
+axis equal;
+
+rectangle("Position", ...
+    [area.xMin area.yMin area.xMax-area.xMin area.yMax-area.yMin], ...
+    "LineStyle","--", "LineWidth",1.5);
+
+plot(coveragePoints(:,1), coveragePoints(:,2), ".", ...
+    "MarkerSize",8);
+
+plot(startPositions(:,1), startPositions(:,2), "ks", ...
+    "MarkerSize",9, "LineWidth",2);
+
+legendEntries = ["Area Boundary", "Coverage Points", "UAV Starts"];
+
+styles = ["-o", "-s", "-^", "-d"];
+
+for a = 1:numel(algNames)
+    alg = algNames{a};
+    algPaths = paths.(alg);
+
+    for u = 1:numel(algPaths)
+        p = algPaths{u};
+        plot(p(:,1), p(:,2), styles(a), "LineWidth",1.5);
+        legendEntries(end+1) = string(alg) + " UAV" + u;
+    end
+end
+
+xlabel("X / East");
+ylabel("Y / North");
+title("3-UAV Coverage Trajectory Comparison");
+legend(legendEntries, "Location","bestoutside");
+
+exportgraphics(gcf,"coverage_trajectory_comparison_2d.png","Resolution",300);
+
+figure;
+hold on;
+grid on;
+
+plot3(coveragePoints(:,1), coveragePoints(:,2), coveragePoints(:,3), ".", ...
+    "MarkerSize",8);
+
+plot3(startPositions(:,1), startPositions(:,2), startPositions(:,3), "ks", ...
+    "MarkerSize",9, "LineWidth",2);
+
+legendEntries = ["Coverage Points", "UAV Starts"];
+
+for a = 1:numel(algNames)
+    alg = algNames{a};
+    algPaths = paths.(alg);
+
+    for u = 1:numel(algPaths)
+        p = algPaths{u};
+        plot3(p(:,1), p(:,2), p(:,3), styles(a), "LineWidth",1.5);
+        legendEntries(end+1) = string(alg) + " UAV" + u;
+    end
+end
+
+xlabel("X / East");
+ylabel("Y / North");
+zlabel("Altitude");
+title("3D 3-UAV Coverage Trajectory Comparison");
+legend(legendEntries, "Location","bestoutside");
+view(3);
+
+exportgraphics(gcf,"coverage_trajectory_comparison_3d.png","Resolution",300);
+end
