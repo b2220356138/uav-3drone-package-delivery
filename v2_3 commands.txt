@@ -1,0 +1,283 @@
+clear
+clc
+close all
+bdclose all
+
+cd("C:\Users\HP\Documents\MATLAB\Examples\R2026a\uav\UAVPackageDeliveryExample")
+
+try
+    prj = currentProject;
+catch
+    prj = openProject("uavPackageDelivery\uavPackageDelivery.prj");
+end
+
+addpath(genpath(prj.RootFolder))
+"""""""""""""""""""""
+swarmFolder = "C:\Users\HP\Downloads\swarm_navigation_ready_v2\swarm_navigation_ready_v2";
+
+addpath(genpath(swarmFolder))
+rehash
+"""""""""""""""""""""""""""""""""
+mdlMap = "uavPackageDelivery_3UAV_photo3D_mapping_test";
+
+open_system(fullfile(prj.RootFolder,"work", mdlMap + ".slx"))
+
+
+""""""""""""""""""""
+ext1 = mdlMap + "/ExternalSensors_UAV1";
+
+phExt1 = get_param(ext1,"PortHandles");
+
+% ExternalSensors_UAV1 Outport 2 = Lidar Data Bus
+lidarOut = phExt1.Outport(2);
+
+toWsBlk = mdlMap + "/ToWorkspace_LidarData";
+
+if isempty(find_system(mdlMap,"SearchDepth",1,"Name","ToWorkspace_LidarData"))
+
+    add_block("simulink/Sinks/To Workspace", toWsBlk, ...
+        "Position",[900 350 1040 390]);
+
+    set_param(toWsBlk,"VariableName","lidarDataLog");
+
+    try
+        set_param(toWsBlk,"SaveFormat","Structure With Time");
+    catch
+    end
+
+    phToWs = get_param(toWsBlk,"PortHandles");
+
+    add_line(mdlMap, lidarOut, phToWs.Inport(1), "autorouting","on");
+
+    save_system(mdlMap)
+end
+"""""""""""""""""""""""""""
+useQGC = false;
+isPhotoRealisticSim = 2;
+guidanceType = 1;
+plantModelFi = 1;
+useHeading = 0;
+startFlightTime = 5;
+showLidarPointCloud = 0;
+showVideoViewer = 0;
+
+assignin("base","useQGC",useQGC);
+assignin("base","isPhotoRealisticSim",isPhotoRealisticSim);
+assignin("base","guidanceType",guidanceType);
+assignin("base","plantModelFi",plantModelFi);
+assignin("base","useHeading",useHeading);
+assignin("base","startFlightTime",startFlightTime);
+assignin("base","showLidarPointCloud",showLidarPointCloud);
+assignin("base","showVideoViewer",showVideoViewer);
+
+"""""""""""""""""""
+set_param(mdlMap,"StopTime","10")
+save_system(mdlMap)
+
+sim(mdlMap)
+
+"""""""""""""""""""""
+[pointsWorld, originsWorld] = extractWorldLidarPointsAndOrigins(lidarDataLog, "all");
+
+size(pointsWorld)
+size(originsWorld)
+min(pointsWorld)
+max(pointsWorld)
+
+"""""""""""""""""""""""
+
+idx = 1:20:size(pointsWorld,1);
+
+figure;
+scatter3(pointsWorld(idx,1), pointsWorld(idx,2), pointsWorld(idx,3), 2, ".");
+grid on;
+axis equal;
+xlabel("X / East");
+ylabel("Y / North");
+zlabel("Z / Up");
+title("World Lidar Point Cloud from Simulation 3D");
+view(3);
+
+""""""""""""""""""""""""""""
+
+startPoint = [-40; -40; 20];
+goalPoint  = [40; 40; 20];
+
+xMin = floor(min([pointsWorld(:,1); originsWorld(:,1); startPoint(1); goalPoint(1)])) - 20;
+xMax = ceil(max([pointsWorld(:,1); originsWorld(:,1); startPoint(1); goalPoint(1)])) + 20;
+
+yMin = floor(min([pointsWorld(:,2); originsWorld(:,2); startPoint(2); goalPoint(2)])) - 20;
+yMax = ceil(max([pointsWorld(:,2); originsWorld(:,2); startPoint(2); goalPoint(2)])) + 20;
+
+mapBounds = [xMin xMax yMin yMax];
+
+resolution = 1.0;
+
+formationSpacing = 1.0;
+buildingClearance = 0.5;
+inflateRadius = formationSpacing + buildingClearance;   % 1.5 m
+
+[planningOccGrid, gridState, gridInfo] = BuildOccupancyRaycastFromPointCloud( ...
+    pointsWorld, originsWorld, mapBounds, resolution, inflateRadius);
+
+
+"""""""""""""""""""""""
+
+displayMap = zeros(size(gridState));
+
+displayMap(gridState == -1) = 0.5; % unknown
+displayMap(gridState == 0)  = 1.0; % free
+displayMap(gridState == 1)  = 0.0; % occupied
+
+figure;
+imagesc(gridInfo.xVals, gridInfo.yVals, displayMap);
+axis equal;
+set(gca, "YDir", "normal");
+colormap(gray);
+xlabel("X / East");
+ylabel("Y / North");
+title("Ray-Traced Occupancy Map: black=occupied, white=free, gray=unknown");
+
+"""""""""""""""""""""""""
+disp("Haritada iki BEYAZ/FREE nokta seç: önce START, sonra GOAL");
+[xPick, yPick] = ginput(2);
+
+startPoint = [xPick(1); yPick(1); 20];
+goalPoint  = [xPick(2); yPick(2); 20];
+
+startRC = WorldToGrid(startPoint(1:2), gridInfo);
+goalRC  = WorldToGrid(goalPoint(1:2), gridInfo);
+
+fprintf("Start valid: %d\n", IsGridIndexValid(startRC, planningOccGrid));
+fprintf("Goal valid : %d\n", IsGridIndexValid(goalRC, planningOccGrid));
+fprintf("Start blocked: %d\n", planningOccGrid(startRC(1), startRC(2)));
+fprintf("Goal blocked : %d\n", planningOccGrid(goalRC(1), goalRC(2)));
+
+""""""""""""""""""""""
+
+freeGrid = ~planningOccGrid;
+
+CC = bwconncomp(freeGrid, 8);
+
+startLabel = 0;
+goalLabel = 0;
+
+startLinear = sub2ind(size(freeGrid), startRC(1), startRC(2));
+goalLinear  = sub2ind(size(freeGrid), goalRC(1), goalRC(2));
+
+for c = 1:CC.NumObjects
+    cells = CC.PixelIdxList{c};
+
+    if any(cells == startLinear)
+        startLabel = c;
+    end
+
+    if any(cells == goalLinear)
+        goalLabel = c;
+    end
+end
+
+fprintf("Start component: %d\n", startLabel);
+fprintf("Goal component : %d\n", goalLabel);
+
+if startLabel == 0 || goalLabel == 0
+    error("Start veya goal free-space üzerinde değil. Beyaz alan seç.");
+end
+
+if startLabel ~= goalLabel
+    error("Start ve goal aynı bağlı beyaz bölgede değil. Aynı beyaz bölgeden iki nokta seç.");
+end
+
+""""""""""""""""""""""
+gridPath = AStarGrid2D(planningOccGrid, startRC, goalRC);
+
+if isempty(gridPath)
+    error("A* path bulamadı. Inflation azaltılabilir veya farklı beyaz noktalar seçilmeli.");
+end
+
+xy = zeros(2, size(gridPath,1));
+
+for i = 1:size(gridPath,1)
+    xy(:,i) = GridToWorld(gridPath(i,:), gridInfo);
+end
+
+alphaPath = [xy; startPoint(3) * ones(1, size(xy,2))];
+alphaPath = ResamplePathByDistance(alphaPath, 1.0);
+
+if size(alphaPath,2) < 2
+    error("Path çok kısa çıktı. Farklı start/goal seç.");
+end
+
+formationSpacing = 1.0;
+[beta1Path, beta2Path] = GenerateSideBySideFormation(alphaPath, formationSpacing);
+
+"""""""""""""""""""""""""""""
+figure;
+imagesc(gridInfo.xVals, gridInfo.yVals, displayMap);
+axis equal;
+set(gca, "YDir", "normal");
+colormap(gray);
+hold on;
+
+plot(alphaPath(1,:), alphaPath(2,:), "b-", "LineWidth", 2);
+plot(beta1Path(1,:), beta1Path(2,:), "r-", "LineWidth", 1.5);
+plot(beta2Path(1,:), beta2Path(2,:), "g-", "LineWidth", 1.5);
+
+plot(startPoint(1), startPoint(2), "co", "MarkerSize", 10, "LineWidth", 2);
+plot(goalPoint(1), goalPoint(2), "mo", "MarkerSize", 10, "LineWidth", 2);
+
+xlabel("X / East");
+ylabel("Y / North");
+title("Safe A* Path on Ray-Traced 3D Lidar Map");
+legend("Map", "Alpha path", "Beta1 path", "Beta2 path", "Start", "Goal");
+
+"""""""""""""""""""""""""""""
+deltaT = 0.5;
+
+N = min([size(alphaPath,2), size(beta1Path,2), size(beta2Path,2)]);
+t = (0:N-1)' * deltaT;
+
+uav1TranslationTS = timeseries(alphaPath(:,1:N)', t);
+uav2TranslationTS = timeseries(beta1Path(:,1:N)', t);
+uav3TranslationTS = timeseries(beta2Path(:,1:N)', t);
+
+uav1RotationTS = timeseries(zeros(N,3), t);
+uav2RotationTS = timeseries(zeros(N,3), t);
+uav3RotationTS = timeseries(zeros(N,3), t);
+
+swarm3DStopTime = t(end);
+
+assignin("base","uav1TranslationTS",uav1TranslationTS);
+assignin("base","uav2TranslationTS",uav2TranslationTS);
+assignin("base","uav3TranslationTS",uav3TranslationTS);
+
+assignin("base","uav1RotationTS",uav1RotationTS);
+assignin("base","uav2RotationTS",uav2RotationTS);
+assignin("base","uav3RotationTS",uav3RotationTS);
+
+assignin("base","swarm3DStopTime",swarm3DStopTime);
+
+save("swarm_3d_lidar_astar_reduced_inflation.mat", ...
+    "uav1TranslationTS", "uav2TranslationTS", "uav3TranslationTS", ...
+    "uav1RotationTS", "uav2RotationTS", "uav3RotationTS", ...
+    "swarm3DStopTime", ...
+    "alphaPath", "beta1Path", "beta2Path", ...
+    "planningOccGrid", "gridState", "gridInfo");
+
+"""""""""""""""""""""""
+cd("C:\Users\HP\Downloads\swarm_navigation_ready_v2\swarm_navigation_ready_v2")
+addpath(genpath(pwd))
+
+open_system("Swarm3DViewer.slx")
+
+set_param("Swarm3DViewer","StopTime",num2str(swarm3DStopTime + 10))
+
+try
+    set_param("Swarm3DViewer","EnablePacing","on")
+    set_param("Swarm3DViewer","PacingRate","1")
+catch
+    disp("Pacing not supported. Continuing without pacing.")
+end
+
+sim("Swarm3DViewer")
+"""""""""""""""""""""""""""""""""
